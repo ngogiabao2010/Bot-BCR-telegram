@@ -1,3 +1,6 @@
+import os
+import threading
+from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -7,6 +10,23 @@ bot = telebot.TeleBot(TOKEN)
 
 # Bộ nhớ tạm lưu lịch sử cầu của từng user: {chat_id: ['B', 'P', 'T', ...]}
 user_histories = {}
+
+# --- MẠCH GIỮ KẾT NỐI CHO RENDER (CHỐNG NGỦ QUÊN & TIMEOUT PORT) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot Baccarat Telegram đang hoạt động 24/7!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+# -----------------------------------------------------------------
 
 def get_keyboard():
     """Tạo bộ khung nút bấm: Player bên trái, Banker bên phải"""
@@ -39,6 +59,7 @@ def analyze_baccarat_trend(history):
     
     prediction = "Chờ thêm dữ liệu..."
     reason = "Đang tích lũy mẫu cầu..."
+    confidence = "Thấp"  # Mặc định độ chắc chắn
 
     # Lọc bỏ các nhịp Hòa (T) ra khỏi mảng phụ để soi khuôn cầu chính (Main Road)
     main_history = [x for x in history if x != 'T']
@@ -76,7 +97,7 @@ def analyze_baccarat_trend(history):
             if main_history[-1] != main_history[-2] and main_history[-2] == main_history[-3]:
                 is_12 = True
 
-        # 5. Bộ lọc chống gãy thông: Kiểm tra độ nhiễu của nhịp gần nhất (4 tay đảo loạn xạ không theo khuôn)
+        # 5. Bộ lọc chống gãy thông: Kiểm tra độ nhiễu của nhịp gần nhất
         recent_4 = main_history[-4:] if m_len >= 4 else main_history
         is_choppy = False
         if len(recent_4) == 4:
@@ -89,30 +110,35 @@ def analyze_baccarat_trend(history):
             if streak >= 4:
                 prediction = opposite
                 reason = "Gặp Hòa khi đang bệt dài ➔ **Bẻ bệt an toàn** để chốt lãi/tránh gãy."
+                confidence = "Trung bình"
             else:
                 prediction = same
                 reason = "Gặp Hòa ➔ Tiếp tục bám nhịp cầu ổn định trước đó."
+                confidence = "Thấp"
         elif is_choppy:
-            # Phát hiện cầu nhiễu nặng: Đưa ra cảnh báo để tránh dây chuyền thua
             prediction = opposite if last_main == 'P' else same
             reason = "⚠️ **Cầu nhiễu loạn nhịp (Nguy cơ gãy thông cao)** ➔ Khuyến nghị đứng ngoài hoặc giảm nửa vốn."
+            confidence = "Thấp"
         elif streak >= 6:
-            # Bệt dài đạt ngưỡng giới hạn: Kích hoạt bẻ bệt chuẩn xác
             prediction = opposite
             reason = f"Cầu Bệt dài ({streak} tay) đạt đỉnh ➔ Kích hoạt chiến thuật **Bẻ bệt an toàn**."
+            confidence = "Cao"
         elif streak >= 2 and not is_22:
-            # Bệt ngắn: Bám chặt theo bệt ăn chắc
             prediction = same
             reason = f"Phát hiện Cầu Bệt ngắn ({streak} tay) ➔ Ưu tiên đánh **Theo bệt**."
+            confidence = "Cao"
         elif is_11:
             prediction = opposite
             reason = "Phát hiện khuôn chuẩn **Cầu 1-1** (Đảo chiều nhịp nhàng)."
+            confidence = "Cao"
         elif is_22:
             prediction = opposite if main_history[-1] == main_history[-2] else same
             reason = "Phát hiện khuôn chuẩn **Cầu 2-2** (Nhịp đôi cặp)."
+            confidence = "Cao"
         elif is_12:
             prediction = same
             reason = "Phát hiện khuôn chuẩn **Cầu 1-2** (Nhịp bước chân)."
+            confidence = "Trung bình"
         else:
             recent_6 = main_history[-6:] if m_len >= 6 else main_history
             r_b = recent_6.count('B')
@@ -120,29 +146,38 @@ def analyze_baccarat_trend(history):
             if r_b > r_p:
                 prediction = "🔴 Banker"
                 reason = "Nhịp ngắn ổn định nghiêng về Banker."
+                confidence = "Trung bình"
             elif r_p > r_b:
                 prediction = "🔵 Player"
                 reason = "Nhịp ngắn ổn định nghiêng về Player."
+                confidence = "Trung bình"
             else:
                 if b_count >= p_count:
                     prediction = "🔴 Banker"
                     reason = "Cầu cân bằng, phân bổ theo tổng lịch sử Banker."
+                    confidence = "Thấp"
                 else:
                     prediction = "🔵 Player"
                     reason = "Cầu cân bằng, phân bổ theo tổng lịch sử Player."
+                    confidence = "Thấp"
     else:
         if b_count >= p_count:
             prediction = "🔴 Banker"
         else:
             prediction = "🔵 Player"
         reason = "Đang khởi tạo mẫu cầu bàn chơi."
+        confidence = "Thấp"
+
+    # Gắn icon trực quan cho mức độ chắc chắn
+    conf_icon = "🟢 **CAO**" if confidence == "Cao" else ("🟡 **TRUNG BÌNH**" if confidence == "Trung bình" else "🔴 **THẤP**")
 
     analysis_text = (
         f"📊 **CẦU HIỆN TẠI ({total} tay):**\n"
         f"{seq_str}\n\n"
         f"📈 **Sĩ số:** B: {b_count} | P: {p_count} | T: {t_count}\n"
         f"🔍 **Phân tích:** {reason}\n\n"
-        f"🎯 **DỰ ĐOÁN TIẾP THEO:**\n👉 **{prediction}**"
+        f"🎯 **DỰ ĐOÁN TIẾP THEO:**\n👉 **{prediction}**\n"
+        f"🛡️ **Độ chắc chắn:** {conf_icon}"
     )
     return analysis_text
 
@@ -197,5 +232,8 @@ def handle_callback(call):
     bot.answer_callback_query(call.id)
 
 if __name__ == "__main__":
-    print("Bot Baccarat đã đổi vị trí Player / Banker đang chạy...")
+    # Khởi động luồng Flask để mở port cho Render nhận diện
+    keep_alive()
+    
+    print("Tool BCR CRE NGB ĐÃ CHẠY...")
     bot.infinity_polling()
