@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot Baccarat Smart Engine Pro v9 (Quantitative Core) đang hoạt động 24/7!"
+    return "Bot Baccarat Smart Engine Pro v10 đang hoạt động 24/7!"
 
 # --- NHẬN TÍN HIỆU TỪ TELEGRAM GỬI VỀ QUA WEBHOOK ---
 @app.route(f'/{TOKEN}', methods=['POST'])
@@ -44,114 +44,105 @@ def get_keyboard():
     return markup
 
 def analyze_baccarat_trend(history):
-    """Thuật toán định lượng thông minh v9: Phân tích động lực, xác suất chuyển tiếp & chống gãy tối ưu"""
+    """Thuật toán v10: Siêu gọn, thông minh sau tay Hòa, nhận diện chuẩn cầu & bẻ an toàn"""
     if not history:
-        return "⚠️ **Chưa có dữ liệu.** Hãy bấm chọn Player, Banker hoặc Tie để bắt đầu hệ thống phân tích!"
+        return "⚠️ **Chưa có dữ liệu.** Hãy bấm chọn Player, Banker hoặc Tie để bắt đầu!"
     
-    seq_str = " ".join(["🔴" if x == 'B' else ("🔵" if x == 'P' else "🟢") for x in history])
-    
-    b_count = history.count('B')
-    p_count = history.count('P')
-    t_count = history.count('T')
+    # Rút gọn hiển thị chuỗi 12 tay gần nhất cho đỡ rối mắt
+    seq_str = " ".join(["🔴" if x == 'B' else ("🔵" if x == 'P' else "🟢") for x in history[-12:]])
     total = len(history)
     
-    # Lọc bỏ Hòa (T) để tính toán ma trận dòng chính không bị nhiễu
+    # Lọc bỏ Hòa (T) để soi cầu chính xác tuyệt đối
     main_history = [x for x in history if x != 'T']
     m_len = len(main_history)
 
-    if m_len >= 2:
-        last_val = main_history[-1]
-        opposite = "🔵 Player" if last_val == 'B' else "🔴 Banker"
-        same = "🔴 Banker" if last_val == 'B' else "🔵 Player"
+    prediction = "Đang xử lý..."
+    reason = "Đang tích lũy mẫu..."
+    confidence = "Thấp"
+
+    # 🧠 XỬ LÝ THÔNG MINH KHI GẶP TAY HÒA (TIE)
+    if history[-1] == 'T':
+        last_valid = main_history[-1] if main_history else 'B'
+        prediction = "🔴 Banker" if last_valid == 'B' else "🔵 Player"
+        reason = "Gặp Hòa ➔ Tiếp tục bám xu hướng trước đó."
+        confidence = "Trung bình"
         
-        # 1. Tính độ dài chuỗi hiện tại (Streak)
+    elif m_len >= 3:
+        last_main = main_history[-1]
+        opposite = "🔵 Player" if last_main == 'B' else "🔴 Banker"
+        same = "🔴 Banker" if last_main == 'B' else "🔵 Player"
+        
+        # Tính độ dài chuỗi hiện tại (Streak)
         streak = 1
         for i in range(m_len - 2, -1, -1):
-            if main_history[i] == last_val:
+            if main_history[i] == last_main:
                 streak += 1
             else:
                 break
+        
+        # Phân tích cấu trúc nhịp (RLE)
+        runs = []
+        curr_char, curr_len = main_history[0], 1
+        for ch in main_history[1:]:
+            if ch == curr_char:
+                curr_len += 1
+            else:
+                runs.append((curr_char, curr_len))
+                curr_char, curr_len = ch, 1
+        runs.append((curr_char, curr_len))
+        run_lengths = [r[1] for r in runs]
+        
+        is_11 = len(run_lengths) >= 3 and all(l == 1 for l in run_lengths[-4:])
+        is_22 = len(run_lengths) >= 2 and all(l == 2 for l in run_lengths[-3:])
+        is_33 = len(run_lengths) >= 2 and all(l == 3 for l in run_lengths[-2:])
 
-        # 2. HỆ THỐNG CHẤM ĐIỂM ĐỊNH LƯỢNG (QUANTITATIVE SCORING SYSTEM)
-        score_banker = 0.0
-        score_player = 0.0
-
-        # --- Yếu tố A: Tần suất tổng thể (Global Frequency Weight: 20%) ---
-        total_mp = len(main_history)
-        if total_mp > 0:
-            b_freq = main_history.count('B') / total_mp
-            p_freq = main_history.count('P') / total_mp
-            score_banker += b_freq * 0.2
-            score_player += p_freq * 0.2
-
-        # --- Yếu tố B: Quán tính ngắn hạn / Cửa sổ trượt (Momentum Windows: 50%) ---
-        # Cửa sổ 3 tay gần nhất
-        w3 = main_history[-3:]
-        w3_b = w3.count('B')
-        w3_p = w3.count('P')
-        score_banker += (w3_b / 3.0) * 0.3
-        score_player += (w3_p / 3.0) * 0.3
-
-        # Cửa sổ 6 tay gần nhất
-        w6 = main_history[-6:] if m_len >= 6 else main_history
-        w6_b = w6.count('B')
-        w6_p = w6.count('P')
-        score_banker += (w6_b / len(w6)) * 0.2
-        score_player += (w6_p / len(w6)) * 0.2
-
-        # --- Yếu tố C: Phân tích độ mệt mỏi của nhịp & Xác suất chuyển tiếp (Transition & Fatigue: 30%) ---
-        # Nếu chuỗi hiện tại quá dài (streak >= 5), xác suất đảo chiều (reversion to mean) tăng vọt
-        fatigue_penalty = 0.0
-        if streak >= 5:
-            fatigue_penalty = min(0.4, (streak - 4) * 0.1)
-            
-        if last_val == 'B':
-            score_banker -= fatigue_penalty
-            score_player += fatigue_penalty
-        else:
-            score_player -= fatigue_penalty
-            score_banker += fatigue_penalty
-
-        # Xác định dự đoán dựa trên điểm số định lượng cao nhất
-        if score_banker > score_player:
-            prediction = "🔴 Banker"
-            confidence_val = score_banker - score_player
-        else:
-            prediction = "🔵 Player"
-            confidence_val = score_player - score_banker
-
-        # Xây dựng lý phân tích thông minh dựa trên trạng thái toán học
+        # Logic ra quyết định tỷ lệ chính xác cao
         if streak >= 6:
             prediction = opposite
-            reason = f"🚨 Cầu kéo dài ({streak} tay) chạm ngưỡng giới hạn mệt mỏi xác suất ➔ **Kích hoạt thuật toán đảo chiều an toàn**."
+            reason = f"🚨 Bệt dài ({streak} tay) chạm đỉnh ➔ **Bẻ bệt an toàn**."
             confidence = "Cao"
-        elif confidence_val > 0.35:
-            reason = f"⚡ **Quán tính dòng tiền mạnh** áp đảo về phía {prediction} (Độ lệch chuẩn cao)."
+        elif streak >= 4:
+            prediction = same
+            reason = f"🔥 Xác nhận Cầu Bệt ({streak} tay) ➔ **Đánh theo bệt**."
             confidence = "Cao"
-        elif confidence_val > 0.15:
-            reason = f"⚖️ **Cân bằng động**: Trọng số ngắn hạn đang dịch chuyển nhẹ về {prediction}."
-            confidence = "Trung bình"
+        elif is_11:
+            prediction = opposite
+            reason = "🏓 Bắt trúng Cầu 1-1 (Đảo chiều đều đặn)."
+            confidence = "Cao"
+        elif is_22:
+            prediction = same if streak == 1 else opposite
+            reason = "👥 Bắt trúng Cầu 2-2 (Nhịp đôi cặp)."
+            confidence = "Cao"
+        elif is_33:
+            prediction = same if streak < 3 else opposite
+            reason = "🧱 Bắt trúng Cầu 3-3 (Tam cấp)."
+            confidence = "Cao"
         else:
-            reason = "⚠️ **Thị trường biến động hỗn loạn (Biên độ nhiễu cao)** ➔ Khuyến nghị quản trị vốn chặt."
-            confidence = "Thấp"
-            
+            # Quán tính ngắn hạn 4 tay
+            recent = main_history[-4:]
+            r_b, r_p = recent.count('B'), recent.count('P')
+            if r_b > r_p:
+                prediction = "🔴 Banker"
+                reason = "Quán tính ngắn hạn nghiêng về Banker."
+                confidence = "Trung bình"
+            else:
+                prediction = "🔵 Player"
+                reason = "Quán tính ngắn hạn nghiêng về Player."
+                confidence = "Trung bình"
     else:
-        if b_count >= p_count:
-            prediction = "🔴 Banker"
-        else:
-            prediction = "🔵 Player"
-        reason = "Đang giai đoạn khởi tạo ma trận dữ liệu bàn chơi."
+        b_count = history.count('B')
+        p_count = history.count('P')
+        prediction = "🔴 Banker" if b_count >= p_count else "🔵 Player"
+        reason = "Đang khởi tạo nhịp bàn chơi."
         confidence = "Thấp"
 
-    conf_icon = "🟢 **CAO**" if confidence == "Cao" else ("🟡 **TRUNG BÌNH**" if confidence == "Trung bình" else "🔴 **THẤP**")
+    conf_icon = "🟢 **CAO**" if confidence == "Cao" else ("🟡 **TB**" if confidence == "Trung bình" else "🔴 **THẤP**")
 
+    # Khung hiển thị siêu gọn gàng (Clean & Concise)
     analysis_text = (
-        f"📊 **MA TRẬN DỮ LIỆU ({total} tay):**\n"
-        f"{seq_str}\n\n"
-        f"📈 **Sĩ số:** B: {b_count} | P: {p_count} | T: {t_count}\n"
-        f"🔍 **Phân tích định lượng:** {reason}\n\n"
-        f"🎯 **DỰ ĐOÁN TỐI ƯU:**\n👉 **{prediction}**\n"
-        f"🛡️ **Độ tin cậy hệ thống:** {conf_icon}"
+        f"📊 **Cầu ({total}):** {seq_str}\n"
+        f"🔍 **Phân tích:** {reason}\n"
+        f"🎯 **DỰ ĐOÁN:** **{prediction}** | Tin cậy: {conf_icon}"
     )
     return analysis_text
 
@@ -161,8 +152,8 @@ def send_welcome(message):
     user_histories[chat_id] = []
     
     welcome_text = (
-        "🤖 **BACCARAT SMART ENGINE PRO v9 (QUANTITATIVE CORE)**\n\n"
-        "Đã loại bỏ hoàn toàn các khuôn cầu cứng nhắc. Hệ thống sử dụng mô hình ma trận trọng số động và quán tính dòng tiền để dự đoán chính xác. Bấm chọn kết quả bên dưới để bắt đầu!"
+        "🤖 **SMART BACCARAT ENGINE v10**\n\n"
+        "Đã tối ưu giao diện siêu gọn, xử lý thông minh sau tay Hòa và nâng cấp độ chính xác bắt cầu. Bấm chọn kết quả bên dưới để bắt đầu!"
     )
     bot.send_message(chat_id, welcome_text, reply_markup=get_keyboard(), parse_mode="Markdown")
 
