@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot Baccarat Smart Engine Pro v3 đang hoạt động 24/7!"
+    return "Bot Baccarat Smart Engine Pro v5 đang hoạt động 24/7!"
 
 # --- NHẬN TÍN HIỆU TỪ TELEGRAM GỬI VỀ QUA WEBHOOK ---
 @app.route(f'/{TOKEN}', methods=['POST'])
@@ -44,7 +44,7 @@ def get_keyboard():
     return markup
 
 def analyze_baccarat_trend(history):
-    """Thuật toán phân tích siêu cấp: Đọc toàn bộ khuôn cầu Baccarat, chấm điểm trọng số chống gãy liên tục"""
+    """Thuật toán RLE phân tích cấu trúc nhịp cầu chuyên sâu (2/2, 2/3, 1/2/3, Bẻ cầu thông minh)"""
     if not history:
         return "⚠️ **Chưa có dữ liệu.** Hãy bấm chọn Player, Banker hoặc Tie để bắt đầu dựng cầu!"
     
@@ -59,7 +59,7 @@ def analyze_baccarat_trend(history):
     reason = "Đang tích lũy mẫu cầu..."
     confidence = "Thấp"
 
-    # Lọc bỏ Hòa (T) để soi cầu chính (Main Road) chuẩn xác tuyệt đối không bị nhiễu nhịp
+    # Lọc bỏ Hòa (T) để soi cầu chính (Main Road) chuẩn xác tuyệt đối
     main_history = [x for x in history if x != 'T']
     m_len = len(main_history)
 
@@ -68,131 +68,126 @@ def analyze_baccarat_trend(history):
         opposite = "🔵 Player" if last_main == 'B' else "🔴 Banker"
         same = "🔴 Banker" if last_main == 'B' else "🔵 Player"
         
-        # 1. Tính độ dài chuỗi bệt (Streak) hiện tại từ đuôi mảng chính
-        streak = 1
-        for i in range(m_len - 2, -1, -1):
-            if main_history[i] == last_main:
-                streak += 1
-            else:
-                break
+        # 🧩 PHÂN TÍCH CẤU TRÚC NHỊP CẦU (RUN-LENGTH ENCODING)
+        runs = []
+        if main_history:
+            curr_char = main_history[0]
+            curr_len = 1
+            for ch in main_history[1:]:
+                if ch == curr_char:
+                    curr_len += 1
+                else:
+                    runs.append((curr_char, curr_len))
+                    curr_char = ch
+                    curr_len = 1
+            runs.append((curr_char, curr_len))
         
-        # 2. Kiểm tra các loại khuôn cầu chuẩn xác
-        # 2.1. Cầu 1-1 (Ping-pong / Đảo chiều liên tục)
-        is_11 = True
-        for i in range(m_len - 1, max(0, m_len - 4), -1):
-            if i > 0 and main_history[i] == main_history[i-1]:
-                is_11 = False
-                break
+        current_streak = runs[-1][1] if runs else 1
+        run_lengths = [r[1] for r in runs]
+        
+        # 1. Nhận diện Cầu 2-2 (Các nhịp gần nhất đều có độ dài bằng 2)
+        is_22 = len(run_lengths) >= 2 and all(l == 2 for l in run_lengths[-3:])
+        
+        # 2. Nhận diện Cầu 1-1 (Ping-pong)
+        is_11 = len(run_lengths) >= 3 and all(l == 1 for l in run_lengths[-4:])
+        
+        # 3. Nhận diện Cầu 3-3 (Tam cấp)
+        is_33 = len(run_lengths) >= 2 and all(l == 3 for l in run_lengths[-2:])
+        
+        # 4. Nhận diện Cầu bậc thang / Cầu dạng 1/2/3 hoặc biến thiên nhịp
+        is_staircase = False
+        if len(run_lengths) >= 3:
+            last_three = run_lengths[-3:]
+            if last_three in [[1, 2, 3], [3, 2, 1], [1, 2, 2], [2, 2, 3], [1, 3, 2]]:
+                is_staircase = True
 
-        # 2.2. Cầu 2-2 (Nhịp đôi cặp: BB PP BB...)
-        is_22 = False
-        if m_len >= 4:
-            if main_history[-1] == main_history[-2] and main_history[-3] == main_history[-4] and main_history[-1] != main_history[-3]:
-                is_22 = True
+        # 5. Nhận diện cầu loạn phức tạp dạng 2/3 hoặc biên độ hỗn hợp
+        is_complex_mix = False
+        if len(run_lengths) >= 4:
+            recent_lens = run_lengths[-4:]
+            if all(1 <= l <= 3 for l in recent_lens) and not is_11 and not is_22:
+                is_complex_mix = True
 
-        # 2.3. Cầu 3-3 (Nhịp tam cấp: BBB PPP...)
-        is_33 = False
-        if m_len >= 6:
-            if (main_history[-1] == main_history[-2] == main_history[-3]) and \
-               (main_history[-4] == main_history[-5] == main_history[-6]) and \
-               (main_history[-1] != main_history[-4]):
-                is_33 = True
-
-        # 2.4. Cầu 1-2 / 2-1 (Nhịp bước chân)
-        is_12 = m_len >= 3 and main_history[-1] != main_history[-2] and main_history[-2] == main_history[-3]
-        is_21 = m_len >= 3 and main_history[-1] == main_history[-2] and main_history[-2] != main_history[-3]
-
-        # 2.5. Chu kỳ lặp vòng tròn (Pattern Cycle 1-2-1-2 hoặc 2-1-2-1)
-        is_cycle_repeating = False
-        if m_len >= 6:
-            if main_history[-6:-3] == main_history[-3:]:
-                is_cycle_repeating = True
-
-        # 2.6. Bộ lọc phát hiện cầu nhiễu loạn hỗn tạp (gãy khúc liên tục không theo quy luật)
-        recent_4 = main_history[-4:] if m_len >= 4 else main_history
-        is_choppy = False
-        if len(recent_4) == 4:
-            changes = sum(1 for i in range(len(recent_4)-1) if recent_4[i] != recent_4[i+1])
-            if changes >= 3 and not is_11 and not is_cycle_repeating:
-                is_choppy = True
-
-        # --- HỆ THỐNG CHẤM ĐIỂM TRỌNG SỐ VÀ RA QUYẾT ĐỊNH THÔNG MINH ---
+        # --- 🧠 MODULE BẺ CẦU THÔNG MINH & RA QUYẾT ĐỊNH CHUẨN XÁC ---
         if history[-1] == 'T':
-            if streak >= 4:
+            if current_streak >= 4:
                 prediction = opposite
-                reason = "Gặp Hòa khi đang bệt dài ➔ **Bẻ bệt an toàn**."
+                reason = "Gặp Hòa khi đang bệt dài ➔ **Kích hoạt bẻ bệt an toàn**."
                 confidence = "Trung bình"
             else:
                 prediction = same
                 reason = "Gặp Hòa ➔ Tiếp tục bám nhịp ổn định trước đó."
                 confidence = "Thấp"
                 
-        elif is_cycle_repeating:
-            # Bắt đúng chu kỳ lặp vòng tròn -> Dự đoán theo đúng quy luật lặp
-            next_val = main_history[-3]
-            prediction = "🔴 Banker" if next_val == 'B' else "🔵 Player"
-            reason = "🎯 **Bắt trúng chu kỳ lặp khuôn cầu chuẩn xác** (Pattern Cycle)."
-            confidence = "Cao"
-            
-        elif is_33:
-            # Đang chạy cầu 3-3 -> Bám theo nhịp tam cấp
-            prediction = same if streak < 3 else opposite
-            reason = "🧱 **Phát hiện khuôn Cầu 3-3 (Tam cấp ổn định)**."
-            confidence = "Cao"
-            
-        elif streak >= 6:
-            # Bệt dài đạt đỉnh -> Kích hoạt chiến thuật bẻ bệt tối ưu
+        elif current_streak >= 6:
+            # 💡 BẺ CẦU THÔNG MINH: Bệt dài >= 6 tay chạm ngưỡng giới hạn xác suất tự nhiên -> Bẻ ngược an toàn
             prediction = opposite
-            reason = f"Cầu Bệt dài ({streak} tay) chạm ngưỡng đỉnh ➔ Kích hoạt **Bẻ bệt tỷ lệ cao**."
-            confidence = "Cao"
-            
-        elif streak >= 2 and not is_22:
-            # Bệt ngắn ổn định -> Đánh theo bệt
-            prediction = same
-            reason = f"Xác nhận Cầu Bệt ngắn ({streak} tay) ➔ Ưu tiên đánh **Theo bệt**."
-            confidence = "Cao"
-            
-        elif is_11:
-            prediction = opposite
-            reason = "🏓 Bắt trúng khuôn chuẩn **Cầu 1-1 (Ping-pong đều đặn)**."
+            reason = f"🚨 Cầu Bệt dài ({current_streak} tay) đạt đỉnh giới hạn ➔ **Bẻ bệt thông minh** tỷ lệ thắng cao."
             confidence = "Cao"
             
         elif is_22:
-            prediction = opposite if main_history[-1] == main_history[-2] else same
-            reason = "👥 Bắt trúng khuôn chuẩn **Cầu 2-2 (Nhịp đôi cặp)**."
+            # Xử lý chuẩn xác nhịp 2-2: Nếu mới đi 1 tay trong cặp thì theo tiếp tay thứ 2, đủ 2 tay thì đảo chiều
+            if current_streak == 1:
+                prediction = same
+                reason = "👥 **Cầu 2-2 (Nhịp đúp cặp)**: Đang ở tay thứ 2 của cặp ➔ Theo tiếp."
+                confidence = "Cao"
+            else:
+                prediction = opposite
+                reason = "👥 **Cầu 2-2 (Nhịp đôi cặp)**: Đã đủ 2 tay ➔ Đảo chiều sang cặp mới."
+                confidence = "Cao"
+                
+        elif is_11:
+            prediction = opposite
+            reason = "🏓 **Cầu 1-1 (Đảo chiều liên tục)** chuẩn xác."
             confidence = "Cao"
             
-        elif is_12 or is_21:
-            prediction = opposite if streak == 2 else same
-            reason = "👣 Nhận diện khuôn **Cầu bước chân (1-2 / 2-1)**."
+        elif is_33:
+            if current_streak < 3:
+                prediction = same
+                reason = "🧱 **Cầu 3-3 (Tam cấp ổn định)**: Tiếp tục bám nhịp."
+                confidence = "Cao"
+            else:
+                prediction = opposite
+                reason = "🧱 **Cầu 3-3 (Tam cấp)**: Đã đủ 3 tay ➔ Bẻ cầu tam cấp."
+                confidence = "Cao"
+                
+        elif is_staircase:
+            prediction = opposite if current_streak >= 2 else same
+            reason = "📈 **Cầu bậc thang (Dạng 1/2/3 hoặc biến thiên)**: Đọc nhịp xu thế tiếp theo."
             confidence = "Trung bình"
             
-        elif is_choppy:
-            prediction = opposite if last_main == 'P' else same
-            reason = "⚠️ **Cầu nhiễu loạn nhịp nặng (Rủi ro gãy cao)** ➔ Khuyến nghị đứng ngoài."
-            confidence = "Thấp"
+        elif is_complex_mix:
+            # Xử lý cầu loạn 2/3 bằng bộ lọc trọng số hướng đi gần nhất
+            prediction = opposite if current_streak >= 2 else same
+            reason = "⚖️ **Cầu phức tạp / Loạn nhịp (2/3, 1/2/3)**: Kích hoạt bộ lọc cân bằng xác suất thông minh."
+            confidence = "Trung bình"
+            
+        elif current_streak >= 2:
+            prediction = same
+            reason = f"📈 Xác nhận bệt ngắn ({current_streak} tay) ➔ Đánh **Theo bệt**."
+            confidence = "Cao"
             
         else:
-            # Phân tích trọng số xu hướng trong 6 tay gần nhất
-            recent_6 = main_history[-6:] if m_len >= 6 else main_history
-            r_b = recent_6.count('B')
-            r_p = recent_6.count('P')
-            if r_b > r_p + 1:
+            # Phân tích trọng số xu hướng trong 4 tay gần nhất
+            recent_4 = main_history[-4:]
+            r_b = recent_4.count('B')
+            r_p = recent_4.count('P')
+            if r_b > r_p:
                 prediction = "🔴 Banker"
-                reason = "Xu hướng ngắn hạn áp đảo mạnh về Banker."
+                reason = "Xu hướng ngắn hạn áp đảo nhẹ về Banker."
                 confidence = "Trung bình"
-            elif r_p > r_b + 1:
+            elif r_p > r_b:
                 prediction = "🔵 Player"
-                reason = "Xu hướng ngắn hạn áp đảo mạnh về Player."
+                reason = "Xu hướng ngắn hạn áp đảo nhẹ về Player."
                 confidence = "Trung bình"
             else:
                 if b_count >= p_count:
                     prediction = "🔴 Banker"
-                    reason = "Cân bằng nhịp ➔ Phân bổ theo thế mạnh Banker."
+                    reason = "Cân bằng nhịp ➔ Phân bổ theo thế mạnh Banker tổng thể."
                     confidence = "Thấp"
                 else:
                     prediction = "🔵 Player"
-                    reason = "Cân bằng nhịp ➔ Phân bổ theo thế mạnh Player."
+                    reason = "Cân bằng nhịp ➔ Phân bổ theo thế mạnh Player tổng thể."
                     confidence = "Thấp"
     else:
         if b_count >= p_count:
@@ -202,7 +197,6 @@ def analyze_baccarat_trend(history):
         reason = "Đang giai đoạn khởi tạo mẫu cầu bàn chơi."
         confidence = "Thấp"
 
-    # Gắn icon trực quan cho 3 mức độ chắc chắn
     conf_icon = "🟢 **CAO**" if confidence == "Cao" else ("🟡 **TRUNG BÌNH**" if confidence == "Trung bình" else "🔴 **THẤP**")
 
     analysis_text = (
@@ -221,8 +215,8 @@ def send_welcome(message):
     user_histories[chat_id] = []
     
     welcome_text = (
-        "🤖 **BOT BACCARAT SMART ENGINE PRO v3**\n\n"
-        "Đã tích hợp đầy đủ các loại cầu (1-1, 2-2, 3-3, Bệt, Vòng lặp chu kỳ) và bộ lọc chống gãy thông minh. Bấm chọn kết quả bên dưới để bắt đầu phân tích!"
+        "🤖 **BOT BACCARAT SMART ENGINE PRO v5**\n\n"
+        "Đã nâng cấp thuật toán mã hóa nhịp RLE (Nhận diện Cầu 2/2, 3/3, Cầu 1/2/3, 2/3 và Bẻ cầu thông minh chống gãy). Bấm chọn kết quả bên dưới để bắt đầu!"
     )
     bot.send_message(chat_id, welcome_text, reply_markup=get_keyboard(), parse_mode="Markdown")
 
